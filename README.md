@@ -1,3 +1,63 @@
+import java.io.Writer;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ChunkedCharWriter extends Writer {
+    private final List<char[]> chunks = new ArrayList<>();
+    private final int chunkSize;
+    private char[] currentChunk;
+    private int pos;
+
+    public ChunkedCharWriter(int chunkSize) {
+        this.chunkSize = chunkSize;
+        this.currentChunk = new char[chunkSize];
+    }
+
+    @Override
+    public void write(char[] cbuf, int off, int len) {
+        while (len > 0) {
+            int space = chunkSize - pos;
+            int toWrite = Math.min(space, len);
+            System.arraycopy(cbuf, off, currentChunk, pos, toWrite);
+            pos += toWrite;
+            off += toWrite;
+            len -= toWrite;
+
+            if (pos == chunkSize) {
+                chunks.add(currentChunk);
+                currentChunk = new char[chunkSize];
+                pos = 0;
+            }
+        }
+    }
+
+    public String toString() {
+        int totalLength = chunks.size() * chunkSize + pos;
+        char[] all = new char[totalLength];
+        int offset = 0;
+        for (char[] chunk : chunks) {
+            System.arraycopy(chunk, 0, all, offset, chunkSize);
+            offset += chunkSize;
+        }
+        System.arraycopy(currentChunk, 0, all, offset, pos);
+        return new String(all);
+    }
+
+    @Override
+    public void flush() {}
+    @Override
+    public void close() {}
+}
+
+
+
+
+
+
+
+
+
+
 # mars-rover
 
 
