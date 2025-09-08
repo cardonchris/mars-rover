@@ -1,53 +1,59 @@
-import java.io.Writer;
-import java.util.ArrayList;
-import java.util.List;
+DECLARE
+    CURSOR c_regulateur IS
+        SELECT id_regulateur,
+               date_creation,
+               NVL(date_fin, TO_DATE('31-01-2100','DD-MM-YYYY')) AS date_fin_regulateur
+        FROM   regulateur;
 
-public class ChunkedCharWriter extends Writer {
-    private final List<char[]> chunks = new ArrayList<>();
-    private final int chunkSize;
-    private char[] currentChunk;
-    private int pos;
+    -- Variables tampons
+    v_valeur_toto   VARCHAR2(4000);
+    v_date_debut    DATE;
+    v_date_fin      DATE;
 
-    public ChunkedCharWriter(int chunkSize) {
-        this.chunkSize = chunkSize;
-        this.currentChunk = new char[chunkSize];
-    }
+BEGIN
+    FOR r IN c_regulateur LOOP
 
-    @Override
-    public void write(char[] cbuf, int off, int len) {
-        while (len > 0) {
-            int space = chunkSize - pos;
-            int toWrite = Math.min(space, len);
-            System.arraycopy(cbuf, off, currentChunk, pos, toWrite);
-            pos += toWrite;
-            off += toWrite;
-            len -= toWrite;
+        -- Initialisation : valeur initiale inconnue (sera prise dans OLD de la première modif)
+        v_valeur_toto := NULL;
+        v_date_debut  := r.date_creation;
+        v_date_fin    := r.date_fin_regulateur;
 
-            if (pos == chunkSize) {
-                chunks.add(currentChunk);
-                currentChunk = new char[chunkSize];
-                pos = 0;
-            }
-        }
-    }
+        -- Parcours des audits
+        FOR rec IN (
+            SELECT a.date_modif,
+                   REGEXP_SUBSTR(a.commentaire, 'toto\(old=([^,]+),new=[^)]*\)', 1, 1, NULL, 1) AS old_toto,
+                   REGEXP_SUBSTR(a.commentaire, 'toto\(old=[^,]+,new=([^)]*)\)', 1, 1, NULL, 1) AS new_toto
+            FROM   audit a
+            WHERE  a.id_regulateur = r.id_regulateur
+              AND  REGEXP_LIKE(a.commentaire, 'toto\(old=.*new=.*\)')
+            ORDER  BY a.date_modif
+        ) LOOP
+-- Si première modif, initialiser valeur initiale
+            IF v_valeur_toto IS NULL THEN
+                v_valeur_toto := rec.old_toto;
+            END IF;
 
-    public String toString() {
-        int totalLength = chunks.size() * chunkSize + pos;
-        char[] all = new char[totalLength];
-        int offset = 0;
-        for (char[] chunk : chunks) {
-            System.arraycopy(chunk, 0, all, offset, chunkSize);
-            offset += chunkSize;
-        }
-        System.arraycopy(currentChunk, 0, all, offset, pos);
-        return new String(all);
-    }
+            -- Insérer l’état courant jusqu’à la date de la modif
+            INSERT INTO table_cible (id_regulateur, valeur_toto, date_debut, date_fin)
+            VALUES (r.id_regulateur, v_valeur_toto, v_date_debut, rec.date_modif);
 
-    @Override
-    public void flush() {}
-    @Override
-    public void close() {}
-}
+            -- Mettre à jour pour la prochaine itération
+            v_valeur_toto := rec.new_toto;
+            v_date_debut  := rec.date_modif;
+
+        END LOOP;
+END LOOP;
+
+        -- Insérer la dernière valeur courante (soit issue de OLD si aucune modif,
+        -- soit issue du dernier NEW si des modifs existent)
+        INSERT INTO table_cible (id_regulateur, valeur_toto, date_debut, date_fin)
+        VALUES (r.id_regulateur, v_valeur_toto, v_date_debut, v_date_fin);
+
+    END LOOP;
+
+    COMMIT;
+END;
+/
 
 
 
